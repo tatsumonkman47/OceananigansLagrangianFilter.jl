@@ -31,3 +31,32 @@ run_offline_Lagrangian_filter(filter_config)
 
 # The filtered data is now saved to `my_filtered_simulation.jld2`
 ```
+
+## Spatially varying cutoff frequency
+
+The offline filter accepts a `cutoff_mask` that multiplies the cutoff frequency locally,
+so that `freq_c_local = cutoff_mask * freq_c`. The mask may be a full three-dimensional
+centered `Field`, or it may omit invariant dimensions by using `Nothing` locations. For
+example, a mask that varies only in `x` and `z` can be supplied as
+
+```julia
+input = FieldTimeSeries("my_simulation.jld2", "T")
+grid = input.grid
+
+cutoff_mask = Field{Center, Nothing, Center}(grid)
+domain_length = 10_000
+set!(cutoff_mask, (x, z) -> 1 + 0.5 * sin(2π * x / domain_length))
+
+filter_config = OfflineFilterConfig(original_data_filename = "my_simulation.jld2",
+                                    var_names_to_filter = ("T",),
+                                    velocity_names = ("u", "v", "w"),
+                                    grid = grid,
+                                    N = 2,
+                                    freq_c = 1e-4,
+                                    cutoff_mask = cutoff_mask)
+```
+
+Mask values must be finite and strictly positive. A scalar mask is also accepted and is
+folded into `freq_c`, which uses the original spatially uniform implementation exactly.
+Spatial masks are not yet supported with boundary relaxation or the optional Eulerian
+post-processing filter.
