@@ -22,6 +22,7 @@ example_scripts = [
     "offline_filter_geostrophic_adjustment.jl",
     "offline_filter_shallow_water_IO.jl",
     "offline_filter_lee_wave.jl",
+    "offline_filter_spatial_cutoff.jl",
 ]
 
 
@@ -63,6 +64,7 @@ example_pages = [
     "Geostrophic adjustment offline"        => "literated/offline_filter_geostrophic_adjustment.md",
     "Shallow water inertial oscillation offline"       => "literated/offline_filter_shallow_water_IO.md",
     "Lee wave offline"       => "literated/offline_filter_lee_wave.md",
+    "Spatial cutoff validation" => "literated/offline_filter_spatial_cutoff.md",
 ]
 
 theory_pages = [

@@ -34,8 +34,13 @@ run_offline_Lagrangian_filter(filter_config)
 
 ## Spatially varying cutoff frequency
 
-The offline filter accepts a `cutoff_mask` that multiplies the cutoff frequency locally,
-so that `freq_c_local = cutoff_mask * freq_c`. The mask may be a full three-dimensional
+The offline filter accepts a stationary `cutoff_mask` that sets the rate of a filter
+clock along each trajectory: `dτ/dt = cutoff_mask`. Where the mask is constant along
+a trajectory, the usual frequency response has `freq_c_local = cutoff_mask * freq_c`.
+When particles cross mask gradients, the filter continuously adapts along their
+trajectories; it does not hold the output-location cutoff fixed over the averaging
+window. See [Spatially varying cutoff equations](@ref) for the normalized kernel.
+The mask may be a full three-dimensional
 centered `Field`, or it may omit invariant dimensions by using `Nothing` locations. For
 example, a mask that varies only in `x` and `z` can be supplied as
 
@@ -58,5 +63,29 @@ filter_config = OfflineFilterConfig(original_data_filename = "my_simulation.jld2
 
 Mask values must be finite and strictly positive. A scalar mask is also accepted and is
 folded into `freq_c`, which uses the original spatially uniform implementation exactly.
-Spatial masks are not yet supported with boundary relaxation or the optional Eulerian
-post-processing filter.
+Spatial masks can be combined with boundary relaxation. The relaxation mask still
+sets where the boundary forcing acts, while `cutoff_mask` sets the local filter
+clock and map-equilibrium target. Spatial masks are not yet supported by the
+optional Eulerian post-processing filter.
+
+The runnable `examples/offline_filter_spatial_cutoff.jl` example compares the PDE
+solution with direct quadrature along exact trajectories. The corresponding
+`test/test_spatial_cutoff_integration.jl` tests constant and materially conserved
+tracers, the stationary-particle frequency response, displacement maps, mean
+velocities, and mean-position remapping. These CPU tests cover orders 1, 2, and
+(for stationary particles) 4; they do not establish GPU or arbitrary-grid support.
+
+From the package directory, run the example and the focused analytical tests with
+
+```sh
+julia --project=. examples/offline_filter_spatial_cutoff.jl
+julia --project=. -e 'using Test, OceananigansLagrangianFilter; include("test/test_spatial_cutoff_integration.jl")'
+```
+
+The example retains its input and final JLD2 files in the working directory.
+The tests create and remove their own temporary data.
+
+Choose the filtering timestep to resolve the largest local cutoff, and leave an
+endpoint exclusion interval long enough for the smallest local decay rate. Do not
+modify the mask while a run is in progress. The mask is an input field, not an
+advected tracer or a time-dependent diagnostic of the flow.

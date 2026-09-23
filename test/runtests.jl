@@ -2,6 +2,7 @@
 #   test_loading.jl              - the package and its exports load correctly
 #   test_config_validation.jl   - OfflineFilterConfig / OnlineFilterConfig validation, esp. boundary_relaxation
 #   test_cutoff_mask.jl         - spatial cutoff validation and constant-mask equivalence
+#   test_spatial_cutoff_integration.jl - analytical response, trajectory quadrature, and mean maps
 #   test_initialisation.jl      - filter/map initialisation, sign flipping, and relaxation forcing
 #   test_offline_integration.jl - end-to-end offline filter run vs. saved reference data
 #   test_online_integration.jl  - end-to-end online filter run vs. saved reference data
@@ -15,6 +16,7 @@ include("test_utils.jl")
 include("test_loading.jl")
 include("test_config_validation.jl")
 include("test_cutoff_mask.jl")
+include("test_spatial_cutoff_integration.jl")
 include("test_initialisation.jl")
 include("test_offline_integration.jl")
 include("test_online_integration.jl")

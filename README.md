@@ -89,6 +89,12 @@ run_offline_Lagrangian_filter(filter_config)
 ```
 You can find an example of a simple simulation of geostrophic adjustment in `/examples/geostrophic_adjustment.jl`. The filtering is then performed using `/examples/offline_filter_geostrophic_adjustment.jl`.
 
+For a spatially varying cutoff, see
+[`examples/offline_filter_spatial_cutoff.jl`](examples/offline_filter_spatial_cutoff.jl).
+This example compares the adaptive filter with direct integration along known
+particle trajectories. Its definition and current limitations are described in
+the [offline implementation notes](docs/src/offline_filtering/offline_implementation.md).
+
 ### Online Filtering
 
 For online filtering, you would integrate the filter directly into your `Oceananigans.jl` setup, using the helper functions provided. See an example corresponding to the above online filtering in `/examples/online_filter_geostrophic_adjustment.jl`. The filtered values are then computed as your simulation runs, avoiding the need to save data at high frequency. 

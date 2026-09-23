@@ -184,7 +184,7 @@ Keyword arguments
   - `relax_timescale`: A `Real` indicating the timescale at which to relax the boundaries to the original fields if boundary_relaxation is `true`. Default `nothing`.
   - `mask_params`: A `NamedTuple` containing any parameters necessary for `mask_func`. Default `nothing`.
   - `mask_func`: A `Function` defining the mask for the relaxation. Should be 1 for full relaxation, and 0 for no relaxation. Arguments should be non-flat spatial dimensions and `mask_params`. Default `nothing`.
-  - `cutoff_mask`: A positive scalar or an Oceananigans `Field` whose value multiplies the reference cutoff frequency. Field locations may be `Center` or `Nothing`, so the mask may be reduced over one or more dimensions. The default value `1` recovers the spatially uniform filter.
+  - `cutoff_mask`: A positive scalar or stationary Oceananigans `Field` defining the filter-clock rate `dτ/dt`. A mask constant along a trajectory multiplies the reference cutoff frequency; otherwise the filter adapts continuously along that trajectory. Field locations may be `Center` or `Nothing`. Do not mutate the mask during filtering. The default value `1` recovers the spatially uniform filter.
 # Example:
 
 ```jldoctest offline config
@@ -466,8 +466,6 @@ You can continue, but you should consider setting `map_to_mean=false` as the map
         isfinite(mask_min) && isfinite(mask_max) && mask_min > 0 ||
             error("cutoff_mask must contain only finite, strictly positive values")
 
-        boundary_relaxation &&
-            error("A spatial cutoff_mask is not yet supported with boundary_relaxation=true")
         compute_Eulerian_filter &&
             error("A spatial cutoff_mask is not yet supported with compute_Eulerian_filter=true")
 
