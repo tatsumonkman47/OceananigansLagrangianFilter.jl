@@ -154,7 +154,13 @@ end
 
                 velocity, map_state, M = 2.3, 0.125, 0.5
                 # The masked map state is M times the scalar-cutoff state.
-                target = uniform.parameters[1] * velocity
+                c = spatial.filter_params.c1
+                d = N == 1 ? 0.0 : spatial.filter_params.d1
+                coefficient = N == 1 ? -1 / c^2 :
+                              component === :C1 ? (d^2 - c^2) / (c^2 + d^2)^2 :
+                                                 -2c * d / (c^2 + d^2)^2
+                target = coefficient * velocity / M^2
+                @test uniform.func(0.1, -0.2, 0.0, velocity, target, uniform.parameters) ≈ 0 atol=1e-14
                 @test masked.func(0.1, -0.2, 0.0, velocity, M * target, M, masked.parameters) ≈ 0 atol=1e-14
                 @test masked.func(0.1, -0.2, 0.0, velocity, M * map_state, M, masked.parameters) ≈
                       M * uniform.func(0.1, -0.2, 0.0, velocity, map_state, uniform.parameters) rtol=1e-12

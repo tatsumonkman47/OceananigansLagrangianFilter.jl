@@ -65,7 +65,12 @@ Mask values must be finite and strictly positive. A scalar mask is also accepted
 folded into `freq_c`, which uses the original spatially uniform implementation exactly.
 Spatial masks can be combined with boundary relaxation. The relaxation mask still
 sets where the boundary forcing acts, while `cutoff_mask` sets the local filter
-clock and map-equilibrium target. Spatial masks are not yet supported by the
+clock and map-equilibrium target. Set `boundary_relaxation=true`,
+`relax_timescale`, `mask_func`, and `mask_params` in the same
+`OfflineFilterConfig` call that supplies `cutoff_mask`. The existing uniform
+map-relaxation functions remain in use when the cutoff is scalar; a separate
+spatial map forcing applies the local `1 / cutoff_mask` equilibrium factor.
+Spatial masks are not yet supported by the
 optional Eulerian post-processing filter.
 
 The runnable `examples/offline_filter_spatial_cutoff.jl` example compares the PDE
