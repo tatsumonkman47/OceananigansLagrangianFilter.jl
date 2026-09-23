@@ -108,77 +108,37 @@ Backward-pass equations of the same form are solved by time-reversing the veloci
 
 ## Spatially varying cutoff equations
 
-The spatial-cutoff option extends the constant-coefficient filter above by choosing
-a strictly positive, stationary mask ``M(\boldsymbol{x})`` and defining a filter
-clock along each particle trajectory ``\boldsymbol{X}(t)``:
+For a positive, stationary mask ``M(\boldsymbol{x})``, define a filter clock along
+particle trajectories ``\boldsymbol{X}(t)`` by
 
 ```math
 \tau(t)-\tau(s)=\int_s^t M(\boldsymbol{X}(r))\,\mathrm{d}r.
 ```
 
-The adaptive mean at the instantaneous particle position is defined by
+The offline mean uses the reference kernel ``G`` and its physical-time Jacobian:
 
 ```math
 f^*(\boldsymbol{X}(t),t)=\int_{-\infty}^{\infty}
- G\bigl(\tau(t)-\tau(s)\bigr) f(\boldsymbol{X}(s),s)
- M(\boldsymbol{X}(s))\,\mathrm{d}s.
+G(\tau(t)-\tau(s)) f(\boldsymbol{X}(s),s)
+M(\boldsymbol{X}(s))\,\mathrm{d}s.
 ```
 
-Here ``G`` is the **reference** kernel, using the unscaled coefficients from
-`freq_c`. Changing variables from ``s`` to ``\tau(s)`` shows that the kernel
-integrates to one whenever the reference kernel does. Consequently a constant,
-or a materially conserved tracer, is preserved in the infinite-window,
-continuum limit. The finite computation retains the usual endpoint and
-discretization errors.
+The Jacobian makes the kernel integrate to one, preserving constants in the
+infinite-window limit. If ``M=m`` along a trajectory, the kernel is
+``mG(m(t-s))`` and the local cutoff is ``m\,\mathrm{freq_c}``. If ``M`` varies,
+there is no single physical-time frequency response.
 
-For constant ``M=m`` along a trajectory, the kernel becomes ``mG(m(t-s))``,
-with physical-frequency response ``1/[1+(\omega/(m\,\mathrm{freq_c}))^{2N}]``.
-For varying ``M`` this is a Butterworth-squared filter in ``\tau``, and has no
-single time-invariant transfer function in physical time. In particular it is
-different from freezing ``M(\boldsymbol{X}(t))`` throughout the averaging window.
-This clock-based definition is an extension of the constant-cutoff formulation;
-it is not an assertion that arbitrary coefficient substitution preserves the
-original physical-time convolution.
-
-Writing ``D_t=\partial_t+\boldsymbol{u}\cdot\nabla``, the forward tracer equations
-are
+With ``D_t=\partial_t+\boldsymbol{u}\cdot\nabla``, each forward filter pair obeys
 
 ```math
 D_t g_{Ck}=M(f-c_k g_{Ck}-d_k g_{Sk}),\qquad
 D_t g_{Sk}=M(-c_k g_{Sk}+d_k g_{Ck}).
 ```
 
-Reconstruct with the reference coefficients ``\sum_k(a_k g_{Ck}+b_k g_{Sk})``.
-Both the source and decay terms must carry ``M``. Scaling only decay and then
-multiplying the output by the local mask generally fails to preserve constants
-when particles cross gradients.
-
-For the position equations, define
-``\kappa_{Ck}=c_k/(c_k^2+d_k^2)`` and
-``\kappa_{Sk}=d_k/(c_k^2+d_k^2)`` using reference coefficients. Subtracting
-``\kappa_{Ck}\boldsymbol{x}`` and ``\kappa_{Sk}\boldsymbol{x}`` from the
-corresponding filtered position variables gives
-
-```math
-\begin{aligned}
-D_t\boldsymbol{\xi}_{Ck}
- &= -M(c_k\boldsymbol{\xi}_{Ck}+d_k\boldsymbol{\xi}_{Sk})
-    -\kappa_{Ck}\boldsymbol{u},\\
-D_t\boldsymbol{\xi}_{Sk}
- &= M(-c_k\boldsymbol{\xi}_{Sk}+d_k\boldsymbol{\xi}_{Ck})
-    -\kappa_{Sk}\boldsymbol{u}.
-\end{aligned}
-```
-
-The displacement reconstruction also uses reference ``a_k,b_k``. The existing
-forward/backward sum and interpolation to mean position still apply. The
-physical-time derivative of the mean map uses one factor of ``M`` multiplying
-the reference mean-velocity reconstruction, followed by the usual subtraction
-of the backward contribution. With a varying clock, this map-derived mean
-velocity need not equal the adaptive scalar filter applied to velocity.
-
-The locally equilibrated initialization is ``g_{Ck}=\kappa_{Ck}f`` and
-``g_{Sk}=\kappa_{Sk}f``. The corresponding displacement initialization is
+Reconstruction uses the reference coefficients ``a_k,b_k``. The position-map
+equations retain the reference velocity source and multiply their decay terms
+by ``M``. Their local equilibrium, also used for initialization and boundary
+relaxation, is
 
 ```math
 \boldsymbol{\xi}_{Ck}
@@ -187,7 +147,6 @@ The locally equilibrated initialization is ``g_{Ck}=\kappa_{Ck}f`` and
 =\frac{-2c_kd_k}{M(c_k^2+d_k^2)^2}\boldsymbol{u}.
 ```
 
-These initialize local equilibria, not the unknown prehistory of a particle
-crossing gradients. Exclude endpoint transients when comparing with the
-infinite-window definition. The single-exponential case follows by setting
-``d_1=0`` and omitting the sine variables.
+These equilibria do not account for a particle's prehistory across mask
+gradients; finite runs retain endpoint transients. For the single-exponential
+case, set ``d_1=0`` and omit the sine variables.
