@@ -3,6 +3,7 @@ module OnlineLagrangianFilter
 using ..OceananigansLagrangianFilter: AbstractConfig, AbstractOnlineConfig
 using Oceananigans.Grids: AbstractGrid, RectilinearGrid, LatitudeLongitudeGrid, topology, Flat
 using Oceananigans.Architectures
+# Check that a spatial mask is a centered Field on this grid with valid values.
 using Oceananigans.Fields: Field, Center, location, interior
 using Oceananigans.ImmersedBoundaries: ImmersedBoundaryGrid
 
@@ -162,6 +163,8 @@ function OnlineFilterConfig(; grid::AbstractGrid,
     # Warn that var_names_to_filter need to be existing tracers or auxiliary_fields
     @info "Variables to be filtered: $(var_names_to_filter). Ensure these are valid tracer or auxiliary field names in the simulation."
 
+    # A scalar changes the uniform kernel coefficients; only a Field needs
+    # per-cell forcing and must remain attached to the online model.
     if cutoff_mask isa Real
         isfinite(cutoff_mask) && cutoff_mask > 0 ||
             error("cutoff_mask must be finite and strictly positive")
