@@ -93,7 +93,7 @@ function run_offline_Lagrangian_filter(config)
 
     # The filtered variables are already well initialised for the backward run, but the maps need reversing.
     if config.map_to_mean || config.compute_mean_velocities
-        change_sign_of_map_variables!(model, config)
+    change_sign_of_map_variables!(model, config)
     end
   
     # Reset time

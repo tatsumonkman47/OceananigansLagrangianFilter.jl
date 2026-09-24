@@ -5,7 +5,15 @@ const CUTOFF_MASK_FIELD = :_lagrangian_filter_cutoff_mask
 # A spatial cutoff is stored as one dimensionless field M. Filter time along
 # a trajectory satisfies dτ = M dt. Both tracer input and decay are multiplied
 # by M; reconstruction uses the reference aᵢ, bᵢ. This preserves constants even
-# when trajectories cross mask gradients. See the offline theory documentation.
+# when trajectories cross mask gradients. See the filtering theory documentation.
+
+_cutoff_mask_field(::AbstractOfflineConfig) = CUTOFF_MASK_FIELD
+_cutoff_mask_field(config::AbstractOnlineConfig) =
+    isempty(config.label) ? CUTOFF_MASK_FIELD : Symbol(CUTOFF_MASK_FIELD, config.label)
+
+cutoff_mask_auxiliary_fields(config::AbstractOnlineConfig) =
+    isnothing(config.cutoff_mask) ? NamedTuple() :
+    NamedTuple{(_cutoff_mask_field(config),)}((config.cutoff_mask,))
 
 """
     copy_file_metadata!(original_file::JLD2.JLDFile, new_file::JLD2.JLDFile,
@@ -399,7 +407,7 @@ function create_original_vars(config::AbstractConfig)
     end
 
     if config isa AbstractOfflineConfig && !isnothing(config.cutoff_mask)
-        vars[CUTOFF_MASK_FIELD] = config.cutoff_mask
+        vars[_cutoff_mask_field(config)] = config.cutoff_mask
     end
 
     return NamedTuple(vars)
@@ -496,44 +504,39 @@ Includes the special case of a single exponential.
 # Returns
 - A `Forcing` object configured to compute the forcing term for the gC field.
 """
-@inline function _spatial_gC_tendency(gC, gS, cutoff_mask, c, d)
+@inline _forcing_cutoff(args, mask_offset) = mask_offset == 0 ? 1 : args[end-1]
+
+@inline function _gC_tendency(gC, gS, cutoff_mask, c, d)
     c_local = cutoff_mask * c
     d_local = cutoff_mask * d
     return -c_local * gC - d_local * gS
 end
 
-@inline function _spatial_gS_tendency(gC, gS, cutoff_mask, c, d)
+@inline function _gS_tendency(gC, gS, cutoff_mask, c, d)
     c_local = cutoff_mask * c
     d_local = cutoff_mask * d
     return -c_local * gS + d_local * gC
 end
 
 function _make_gC_forcing(i::Int, labelled_var_name::String, filter_params::NamedTuple,
-                          spatial_cutoff::Bool=false)
+                          spatial_cutoff::Bool=false, cutoff_mask_field::Symbol=CUTOFF_MASK_FIELD)
+    mask_offset = Int(spatial_cutoff)
+    mask_dependency = spatial_cutoff ? (cutoff_mask_field,) : ()
     if filter_params.N_coeffs == 0.5 # Single exponential special case has a simpler forcing
         c = getproperty(filter_params, Symbol("c",i))
         gCkey = Symbol(labelled_var_name,"_C",i)
-        if spatial_cutoff
-            forcing_func = (args...) -> -(args[end-1] * args[end][1]) * args[end-2]
-            return Forcing(forcing_func, parameters = (c,),
-                           field_dependencies = (gCkey, CUTOFF_MASK_FIELD))
-        else
-            forcing_func = (args...) -> -args[end][1]*args[end-1]
-            return Forcing(forcing_func, parameters = (c,), field_dependencies = (gCkey,))
-        end
+        forcing_func = (args...) -> -_forcing_cutoff(args, mask_offset) * args[end][1] * args[end-1-mask_offset]
+        return Forcing(forcing_func, parameters = (c,),
+                       field_dependencies = (gCkey, mask_dependency...))
     else
         c = getproperty(filter_params, Symbol("c",i))
         d = getproperty(filter_params, Symbol("d",i))
         gCkey = Symbol(labelled_var_name, "_C",i)
         gSkey = Symbol(labelled_var_name, "_S",i)
-        if spatial_cutoff
-            forcing_func = (args...) -> _spatial_gC_tendency(args[end-3], args[end-2], args[end-1], args[end]...)
-            return Forcing(forcing_func, parameters = (c,d),
-                           field_dependencies = (gCkey, gSkey, CUTOFF_MASK_FIELD))
-        else
-            forcing_func = (args...) -> -args[end][1]*args[end-2] - args[end][2]*args[end-1]
-            return Forcing(forcing_func, parameters = (c,d), field_dependencies = (gCkey,gSkey))
-        end
+        forcing_func = (args...) -> _gC_tendency(args[end-2-mask_offset], args[end-1-mask_offset],
+                                                 _forcing_cutoff(args, mask_offset), args[end]...)
+        return Forcing(forcing_func, parameters = (c,d),
+                       field_dependencies = (gCkey, gSkey, mask_dependency...))
     end
 end
 
@@ -552,19 +555,17 @@ Create a forcing term for the sine component (gS) of a filtered variable.
 - A `Forcing` object configured to compute the forcing term for the gS field.
 """
 function _make_gS_forcing(i::Int, labelled_var_name::String, filter_params::NamedTuple,
-                          spatial_cutoff::Bool=false)
+                          spatial_cutoff::Bool=false, cutoff_mask_field::Symbol=CUTOFF_MASK_FIELD)
     c = getproperty(filter_params, Symbol("c",i))
     d = getproperty(filter_params, Symbol("d",i))
     gCkey = Symbol(labelled_var_name,"_C",i)
     gSkey = Symbol(labelled_var_name,"_S",i)  
-    if spatial_cutoff
-        forcing_func = (args...) -> _spatial_gS_tendency(args[end-3], args[end-2], args[end-1], args[end]...)
-        return Forcing(forcing_func, parameters = (c,d),
-                       field_dependencies = (gCkey, gSkey, CUTOFF_MASK_FIELD))
-    else
-        forcing_func = (args...) -> -args[end][1]*args[end-1] + args[end][2]*args[end-2]
-        return Forcing(forcing_func, parameters = (c,d), field_dependencies = (gCkey,gSkey))
-    end
+    mask_offset = Int(spatial_cutoff)
+    mask_dependency = spatial_cutoff ? (cutoff_mask_field,) : ()
+    forcing_func = (args...) -> _gS_tendency(args[end-2-mask_offset], args[end-1-mask_offset],
+                                             _forcing_cutoff(args, mask_offset), args[end]...)
+    return Forcing(forcing_func, parameters = (c,d),
+                   field_dependencies = (gCkey, gSkey, mask_dependency...))
 end
 
 """
@@ -750,7 +751,8 @@ end
 function _make_spatial_xi_relaxation(component::Symbol, i::Int, labelled_var_name::String,
                                      vel_name::String, filter_params::NamedTuple,
                                      relax_timescale::Real, mask_func::Function,
-                                     mask_params::Union{NamedTuple, Nothing})
+                                     mask_params::Union{NamedTuple, Nothing},
+                                     cutoff_mask_field::Symbol)
     c = getproperty(filter_params, Symbol("c", i))
     coefficient = if component === :C && filter_params.N_coeffs == 0.5
         -1 / c^2
@@ -774,7 +776,7 @@ function _make_spatial_xi_relaxation(component::Symbol, i::Int, labelled_var_nam
         -(args[end-2] - target) * boundary_mask / p[2]
     end
     return Forcing(relaxation, parameters = parameters,
-                   field_dependencies = (Symbol(vel_name), xi_key, CUTOFF_MASK_FIELD))
+                   field_dependencies = (Symbol(vel_name), xi_key, cutoff_mask_field))
 end
 
 
@@ -814,13 +816,16 @@ function create_forcing(filtered_vars::Tuple{Vararg{Symbol}}, config::AbstractCo
     filter_params = config.filter_params
     N_coeffs = filter_params.N_coeffs
     label = config.label
-    spatial_cutoff = config isa AbstractOfflineConfig && !isnothing(config.cutoff_mask)
+    spatial_cutoff = !isnothing(config.cutoff_mask)
+    cutoff_mask_field = _cutoff_mask_field(config)
+    mask_offset = Int(spatial_cutoff)
+    mask_dependency = spatial_cutoff ? (cutoff_mask_field,) : ()
 
     # Initialize dictionary
     gC_forcings_dict = Dict()
 
     # Make a simple forcing function for original data forcing - the final argument is the field dependence.
-    original_var_forcing_func = spatial_cutoff ? ((args...) -> args[end-1] * args[end]) : ((args...) -> args[end])
+    original_var_forcing_func = (args...) -> (spatial_cutoff ? args[end] : 1) * args[end-mask_offset]
 
     # Special case `N_coeffs = 0.5`, single exponential
     if N_coeffs == 0.5
@@ -831,8 +836,8 @@ function create_forcing(filtered_vars::Tuple{Vararg{Symbol}}, config::AbstractCo
             gCkey = Symbol(labelled_var_name,"_C1")
 
             # The forcing for gC is the sum of a filter forcing term and the original data forcing
-            gC_forcing = _make_gC_forcing(1, labelled_var_name, filter_params, spatial_cutoff)
-            dependencies = spatial_cutoff ? (var_key, CUTOFF_MASK_FIELD) : (var_key,)
+            gC_forcing = _make_gC_forcing(1, labelled_var_name, filter_params, spatial_cutoff, cutoff_mask_field)
+            dependencies = (var_key, mask_dependency...)
             gC_original_var_forcing = Forcing(original_var_forcing_func, field_dependencies = dependencies)
 
             if config.boundary_relaxation
@@ -856,7 +861,7 @@ function create_forcing(filtered_vars::Tuple{Vararg{Symbol}}, config::AbstractCo
                  
                 # The forcing for xiC includes a term involving xiC (as for tracers) and a 
                 # term involving the corresponding velocity
-                gC_forcing = _make_gC_forcing(1, labelled_var_name, filter_params, spatial_cutoff)
+                gC_forcing = _make_gC_forcing(1, labelled_var_name, filter_params, spatial_cutoff, cutoff_mask_field)
                 xiC_forcing = _make_xiC_forcing(1, vel_name, filter_params)
 
                 if config.boundary_relaxation
@@ -864,7 +869,7 @@ function create_forcing(filtered_vars::Tuple{Vararg{Symbol}}, config::AbstractCo
                     mask_func = config.mask_func
                     mask_params = config.mask_params
                     xiC_relaxation = if spatial_cutoff
-                        _make_spatial_xi_relaxation(:C, 1, labelled_var_name, vel_name, filter_params, relax_timescale, mask_func, mask_params)
+                        _make_spatial_xi_relaxation(:C, 1, labelled_var_name, vel_name, filter_params, relax_timescale, mask_func, mask_params, cutoff_mask_field)
                     else
                         _make_xiC_relaxation(1, labelled_var_name, vel_name, filter_params, relax_timescale, mask_func, mask_params)
                     end
@@ -888,10 +893,10 @@ function create_forcing(filtered_vars::Tuple{Vararg{Symbol}}, config::AbstractCo
                 gSkey = Symbol(labelled_var_name,"_S",i)
 
                 # The forcing for gC is the sum of a filter forcing term and the original data forcing
-                gC_forcing_i = _make_gC_forcing(i, labelled_var_name, filter_params, spatial_cutoff)
-                dependencies = spatial_cutoff ? (var_key, CUTOFF_MASK_FIELD) : (var_key,)
+                gC_forcing_i = _make_gC_forcing(i, labelled_var_name, filter_params, spatial_cutoff, cutoff_mask_field)
+                dependencies = (var_key, mask_dependency...)
                 gC_original_var_forcing = Forcing(original_var_forcing_func, field_dependencies = dependencies)
-                gS_forcing_i = _make_gS_forcing(i, labelled_var_name, filter_params, spatial_cutoff)
+                gS_forcing_i = _make_gS_forcing(i, labelled_var_name, filter_params, spatial_cutoff, cutoff_mask_field)
 
                 if config.boundary_relaxation
                     relax_timescale = config.relax_timescale
@@ -922,11 +927,11 @@ function create_forcing(filtered_vars::Tuple{Vararg{Symbol}}, config::AbstractCo
 
                     # The forcing for xiC includes a term involving xiC and xiS (as for tracers, so reuse forcing constructor) and a 
                     # term involving the corresponding velocity
-                    gC_forcing_i = _make_gC_forcing(i, labelled_var_name, filter_params, spatial_cutoff)
+                    gC_forcing_i = _make_gC_forcing(i, labelled_var_name, filter_params, spatial_cutoff, cutoff_mask_field)
                     xiC_forcing_i = _make_xiC_forcing(i, vel_name, filter_params)
                     
                     # The forcing for xiS also includes a term involving xiC and xiS and a term involving the corresponding velocity
-                    gS_forcing_i = _make_gS_forcing(i, labelled_var_name, filter_params, spatial_cutoff)
+                    gS_forcing_i = _make_gS_forcing(i, labelled_var_name, filter_params, spatial_cutoff, cutoff_mask_field)
                     xiS_forcing_i = _make_xiS_forcing(i, vel_name, filter_params)
 
                     if config.boundary_relaxation
@@ -934,12 +939,12 @@ function create_forcing(filtered_vars::Tuple{Vararg{Symbol}}, config::AbstractCo
                         mask_func = config.mask_func
                         mask_params = config.mask_params
                         xiC_relaxation = if spatial_cutoff
-                            _make_spatial_xi_relaxation(:C, i, labelled_var_name, vel_name, filter_params, relax_timescale, mask_func, mask_params)
+                            _make_spatial_xi_relaxation(:C, i, labelled_var_name, vel_name, filter_params, relax_timescale, mask_func, mask_params, cutoff_mask_field)
                         else
                             _make_xiC_relaxation(i, labelled_var_name, vel_name, filter_params, relax_timescale, mask_func, mask_params)
                         end
                         xiS_relaxation = if spatial_cutoff
-                            _make_spatial_xi_relaxation(:S, i, labelled_var_name, vel_name, filter_params, relax_timescale, mask_func, mask_params)
+                            _make_spatial_xi_relaxation(:S, i, labelled_var_name, vel_name, filter_params, relax_timescale, mask_func, mask_params, cutoff_mask_field)
                         else
                             _make_xiS_relaxation(i, labelled_var_name, vel_name, filter_params, relax_timescale, mask_func, mask_params)
                         end
@@ -958,9 +963,8 @@ function create_forcing(filtered_vars::Tuple{Vararg{Symbol}}, config::AbstractCo
     end
 end
 
-_filter_cutoff_mask(model, ::AbstractOnlineConfig) = nothing
-_filter_cutoff_mask(model, config::AbstractOfflineConfig) =
-    isnothing(config.cutoff_mask) ? nothing : getproperty(model.auxiliary_fields, CUTOFF_MASK_FIELD)
+_filter_cutoff_mask(model, config::AbstractConfig) =
+    isnothing(config.cutoff_mask) ? nothing : getproperty(model.auxiliary_fields, _cutoff_mask_field(config))
 
 """
     create_output_fields(model::AbstractModel, config::AbstractConfig)
@@ -1018,6 +1022,7 @@ function create_output_fields(model::AbstractModel, config::AbstractConfig)
             # Special case, single exponential only has a cosine component
             gC1 = getproperty(model.tracers,Symbol(labelled_var_name * "_C1"))
             g_total = filter_params.a1 * gC1
+            outputs_dict[labelled_var_name * filter_identifier] = g_total
         else
             # Reconstruct the filtered tracer fields, starting with the first coefficient
             gC1 = getproperty(model.tracers, Symbol(labelled_var_name * "_C1"))
@@ -1032,9 +1037,8 @@ function create_output_fields(model::AbstractModel, config::AbstractConfig)
                 gSi = getproperty(model.tracers,Symbol(labelled_var_name * "_S$i" ))
                 g_total += a * gCi + b * gSi
             end
+            outputs_dict[labelled_var_name * filter_identifier] = g_total
         end
-
-        outputs_dict[labelled_var_name * filter_identifier] = g_total
     end
 
     # Reconstruct the maps, if we map to mean
@@ -1045,6 +1049,7 @@ function create_output_fields(model::AbstractModel, config::AbstractConfig)
                 # Special case, single exponential only has a cosine component
                 xiC1 = getproperty(model.tracers,Symbol(labelled_var_name * "_C1"))
                 g_total = filter_params.a1 * xiC1
+                outputs_dict[labelled_var_name] = g_total
             else
                 # Start with the first coefficient
                 xiC1 = getproperty(model.tracers,Symbol(labelled_var_name * "_C1"))
@@ -1059,9 +1064,8 @@ function create_output_fields(model::AbstractModel, config::AbstractConfig)
                     xiSi = getproperty(model.tracers,Symbol(labelled_var_name * "_S$i"))
                     g_total += a * xiCi + b * xiSi
                 end
+                outputs_dict[labelled_var_name] = g_total
             end
-
-            outputs_dict[labelled_var_name] = g_total
         end
     end
 
@@ -1288,6 +1292,14 @@ function initialise_filtered_vars_from_model(model::AbstractModel, config::Abstr
     var_names_to_filter = config.var_names_to_filter
     vel_names = config.velocity_names
     label = config.label
+    cutoff_mask = _filter_cutoff_mask(model, config)
+    cutoff_mask_data = if isnothing(cutoff_mask)
+        nothing
+    else
+        full_cutoff_mask = CenterField(model.grid)
+        set!(full_cutoff_mask, cutoff_mask)
+        parent(full_cutoff_mask)
+    end
     for var_name in var_names_to_filter
         labelled_var_name = var_name * label
         if filter_params.N_coeffs == 0.5 # Special case of single exponential
@@ -1333,7 +1345,11 @@ function initialise_filtered_vars_from_model(model::AbstractModel, config::Abstr
                 original_vel = getproperty(model.velocities, Symbol(vel_name))
                 original_vel_centred = Field(@at (Center, Center, Center) original_vel)
                 map_C = getproperty(model.tracers, filtered_map_C)
-                parent(map_C) .= (-1/c1^2)*parent(original_vel_centred) 
+                if isnothing(cutoff_mask_data)
+                    parent(map_C) .= (-1/c1^2)*parent(original_vel_centred)
+                else
+                    parent(map_C) .= (-1/c1^2) .* parent(original_vel_centred) ./ cutoff_mask_data
+                end
             else
                 for i in 1:filter_params.N_coeffs
                     filtered_map_C = Symbol("xi_", vel_name, label, "_C",i)
@@ -1344,8 +1360,13 @@ function initialise_filtered_vars_from_model(model::AbstractModel, config::Abstr
                     original_vel_centred = Field(@at (Center, Center, Center) original_vel)
                     map_C = getproperty(model.tracers, filtered_map_C)
                     map_S = getproperty(model.tracers, filtered_map_S)
-                    parent(map_C) .= ((di^2 - ci^2)/(ci^2 + di^2)^2)*parent(original_vel_centred) 
-                    parent(map_S) .= (-2*ci*di/(ci^2 + di^2)^2)*parent(original_vel_centred) 
+                    if isnothing(cutoff_mask_data)
+                        parent(map_C) .= ((di^2 - ci^2)/(ci^2 + di^2)^2)*parent(original_vel_centred)
+                        parent(map_S) .= (-2*ci*di/(ci^2 + di^2)^2)*parent(original_vel_centred)
+                    else
+                        parent(map_C) .= ((di^2 - ci^2)/(ci^2 + di^2)^2) .* parent(original_vel_centred) ./ cutoff_mask_data
+                        parent(map_S) .= (-2*ci*di/(ci^2 + di^2)^2) .* parent(original_vel_centred) ./ cutoff_mask_data
+                    end
                 end
             end
         end

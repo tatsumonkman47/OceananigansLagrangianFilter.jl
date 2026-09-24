@@ -31,7 +31,6 @@ run_offline_Lagrangian_filter(filter_config)
 
 # The filtered data is now saved to `my_filtered_simulation.jld2`
 ```
-
 ## Spatially varying cutoff frequency
 
 The offline filter accepts a stationary, positive `cutoff_mask` that sets the
