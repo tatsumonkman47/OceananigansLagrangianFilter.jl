@@ -7,10 +7,19 @@ const CUTOFF_MASK_FIELD = :_lagrangian_filter_cutoff_mask
 # by M; reconstruction uses the reference aᵢ, bᵢ. This preserves constants even
 # when trajectories cross mask gradients. See the filtering theory documentation.
 
+# Offline filtering builds its own auxiliary fields. Online filters may share a
+# model, so their labels give different cutoff masks different field names.
 _cutoff_mask_field(::AbstractOfflineConfig) = CUTOFF_MASK_FIELD
 _cutoff_mask_field(config::AbstractOnlineConfig) =
     isempty(config.label) ? CUTOFF_MASK_FIELD : Symbol(CUTOFF_MASK_FIELD, config.label)
 
+"""
+    cutoff_mask_auxiliary_fields(config::AbstractOnlineConfig)
+
+Return the named auxiliary field needed by an online spatial cutoff. Merge this
+with the model's other `auxiliary_fields` when constructing the model. A scalar
+cutoff needs no field, so this returns an empty `NamedTuple` in that case.
+"""
 cutoff_mask_auxiliary_fields(config::AbstractOnlineConfig) =
     isnothing(config.cutoff_mask) ? NamedTuple() :
     NamedTuple{(_cutoff_mask_field(config),)}((config.cutoff_mask,))
@@ -406,6 +415,7 @@ function create_original_vars(config::AbstractConfig)
         vars[Symbol(var_name)] = fts_data
     end
 
+    # The offline runner passes these fields to the model as auxiliary fields.
     if config isa AbstractOfflineConfig && !isnothing(config.cutoff_mask)
         vars[_cutoff_mask_field(config)] = config.cutoff_mask
     end
@@ -489,21 +499,8 @@ function create_filtered_vars(config::AbstractConfig)
     end
 end
 
-"""
-    _make_gC_forcing(i::Int, var_name::String, filter_params::NamedTuple)
-
-Create a forcing term for the cosine component (gC) of a filtered variable.
-Includes the special case of a single exponential.
-
-# Arguments
-- `i::Int`: The index of the coefficient pair (cᵢ, dᵢ) to use from `filter_params`.
-- `labelled_var_name::String`: The name of the variable being filtered (e.g., "T")
-    including label if used.
-- `filter_params::NamedTuple`: A `NamedTuple` containing all filter coefficients.
-
-# Returns
-- A `Forcing` object configured to compute the forcing term for the gC field.
-"""
+# Oceananigans passes forcing parameters last. A field mask is the dependency
+# just before them; without one, the already-scaled coefficients use factor 1.
 @inline _forcing_cutoff(args, mask_offset) = mask_offset == 0 ? 1 : args[end-1]
 
 @inline function _gC_tendency(gC, gS, cutoff_mask, c, d)
@@ -518,8 +515,24 @@ end
     return -c_local * gS + d_local * gC
 end
 
+"""
+    _make_gC_forcing(i::Int, labelled_var_name::String, filter_params::NamedTuple)
+
+Create a forcing term for the cosine component (gC) of a filtered variable.
+Includes the special case of a single exponential.
+
+# Arguments
+- `i::Int`: The index of the coefficient pair (cᵢ, dᵢ) to use from `filter_params`.
+- `labelled_var_name::String`: The name of the variable being filtered (e.g., "T")
+    including label if used.
+- `filter_params::NamedTuple`: A `NamedTuple` containing all filter coefficients.
+
+# Returns
+- A `Forcing` object configured to compute the forcing term for the gC field.
+"""
 function _make_gC_forcing(i::Int, labelled_var_name::String, filter_params::NamedTuple,
                           spatial_cutoff::Bool=false, cutoff_mask_field::Symbol=CUTOFF_MASK_FIELD)
+    # A field mask adds one dependency, shifting the positions of the g states.
     mask_offset = Int(spatial_cutoff)
     mask_dependency = spatial_cutoff ? (cutoff_mask_field,) : ()
     if filter_params.N_coeffs == 0.5 # Single exponential special case has a simpler forcing
@@ -816,6 +829,8 @@ function create_forcing(filtered_vars::Tuple{Vararg{Symbol}}, config::AbstractCo
     filter_params = config.filter_params
     N_coeffs = filter_params.N_coeffs
     label = config.label
+    # Scalar masks were folded into filter_params by the config constructor.
+    # Only a field mask needs a model dependency and local forcing multiplier.
     spatial_cutoff = !isnothing(config.cutoff_mask)
     cutoff_mask_field = _cutoff_mask_field(config)
     mask_offset = Int(spatial_cutoff)
@@ -963,6 +978,8 @@ function create_forcing(filtered_vars::Tuple{Vararg{Symbol}}, config::AbstractCo
     end
 end
 
+# Retrieve the field attached to this model, including its online label-specific
+# name. `nothing` keeps output and initialization on the uniform-filter path.
 _filter_cutoff_mask(model, config::AbstractConfig) =
     isnothing(config.cutoff_mask) ? nothing : getproperty(model.auxiliary_fields, _cutoff_mask_field(config))
 
@@ -1096,7 +1113,8 @@ function create_output_fields(model::AbstractModel, config::AbstractConfig)
                 end
             end
 
-            # The physical-time derivative of the mean map includes dτ/dt = M.
+            # The map derivative is in filter time; convert the reconstructed
+            # mean velocity back to physical time only when M is a field.
             if !isnothing(cutoff_mask)
                 g_total = cutoff_mask * g_total
             end
@@ -1195,8 +1213,9 @@ function initialise_filtered_vars_from_data(model::AbstractModel, input_data::Na
     label = config.label
     cutoff_mask = _filter_cutoff_mask(model, config)
 
-    # Materialize reduced masks at tracer centers for shape-safe initialization.
-    # This temporary full-size field is discarded after initialization.
+    # Map states start at their local equilibrium, which contains 1/M. Expand
+    # masks with invariant dimensions to tracer centers before array division.
+    # `nothing` retains the original initialization without that division.
     cutoff_mask_data = if isnothing(cutoff_mask)
         nothing
     else
@@ -1293,6 +1312,8 @@ function initialise_filtered_vars_from_model(model::AbstractModel, config::Abstr
     vel_names = config.velocity_names
     label = config.label
     cutoff_mask = _filter_cutoff_mask(model, config)
+    # Match the offline initialization: map equilibria use 1/M, while a missing
+    # field mask follows the original uniform-filter assignments below.
     cutoff_mask_data = if isnothing(cutoff_mask)
         nothing
     else
