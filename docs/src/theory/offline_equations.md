@@ -108,19 +108,21 @@ Backward-pass equations of the same form are solved by time-reversing the veloci
 
 ## Spatially varying cutoff equations
 
-For a positive, stationary mask ``M(\boldsymbol{x})``, define a filter clock along
-particle trajectories ``\boldsymbol{X}(t)`` by
+For a positive, stationary mask ``M(\vb*{x})``, define a filter clock along
+particle trajectories ``\vb*{\varphi}(\vb*{a},t)`` by
 
 ```math
-\tau(t)-\tau(s)=\int_s^t M(\boldsymbol{X}(r))\,\mathrm{d}r.
+\tau(t)-\tau(s)=\int_s^t M(\vb*{\varphi}(\vb*{a},r))\,\mathrm{d}r.
 ```
 
-The offline mean uses the reference kernel ``G`` and its physical-time Jacobian:
+The offline mean uses the reference kernel ``G`` in filter time. Converting the
+integral to physical time ``s`` introduces the Jacobian
+``\mathrm{d}\tau(s)/\mathrm{d}s=M(\vb*{\varphi}(\vb*{a},s))``:
 
 ```math
-f^*(\boldsymbol{X}(t),t)=\int_{-\infty}^{\infty}
-G(\tau(t)-\tau(s)) f(\boldsymbol{X}(s),s)
-M(\boldsymbol{X}(s))\,\mathrm{d}s.
+f^*(\vb*{\varphi}(\vb*{a},t),t)=\int_{-\infty}^{\infty}
+G(\tau(t)-\tau(s)) f(\vb*{\varphi}(\vb*{a},s),s)
+M(\vb*{\varphi}(\vb*{a},s))\,\mathrm{d}s.
 ```
 
 The Jacobian makes the kernel integrate to one, preserving constants in the
