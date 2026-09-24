@@ -1215,9 +1215,9 @@ function initialise_filtered_vars_from_data(model::AbstractModel, input_data::Na
 
     # Map states start at their local equilibrium, which contains 1/M. Expand
     # masks with invariant dimensions to tracer centers before array division.
-    # `nothing` retains the original initialization without that division.
+    # Use 1 when there is no field mask, so the same assignment handles both.
     cutoff_mask_data = if isnothing(cutoff_mask)
-        nothing
+        1
     else
         full_cutoff_mask = CenterField(model.grid)
         set!(full_cutoff_mask, cutoff_mask)
@@ -1255,11 +1255,7 @@ function initialise_filtered_vars_from_data(model::AbstractModel, input_data::Na
                 c1 = filter_params.c1
                 field_C = getproperty(model.tracers, filtered_map_C)
                 initial_vel_centred = Field(@at (Center, Center, Center) vel_fts[Time(0)])
-                if isnothing(cutoff_mask_data)
-                    parent(field_C) .= (-1/c1^2)*parent(initial_vel_centred)
-                else
-                    parent(field_C) .= (-1/c1^2) .* parent(initial_vel_centred) ./ cutoff_mask_data
-                end
+                parent(field_C) .= (-1/c1^2) .* parent(initial_vel_centred) ./ cutoff_mask_data
             else
                 for i in 1:filter_params.N_coeffs
                     filtered_map_C = Symbol("xi_", vel_name, label, "_C",i)
@@ -1269,13 +1265,8 @@ function initialise_filtered_vars_from_data(model::AbstractModel, input_data::Na
                     field_C = getproperty(model.tracers, filtered_map_C)
                     field_S = getproperty(model.tracers, filtered_map_S)
                     initial_vel_centred = Field(@at (Center, Center, Center) vel_fts[Time(0)])
-                    if isnothing(cutoff_mask_data)
-                        parent(field_C) .= ((di^2 - ci^2)/(ci^2 + di^2)^2)*parent(initial_vel_centred)
-                        parent(field_S) .= (-2*ci*di/(ci^2 + di^2)^2)*parent(initial_vel_centred)
-                    else
-                        parent(field_C) .= ((di^2 - ci^2)/(ci^2 + di^2)^2) .* parent(initial_vel_centred) ./ cutoff_mask_data
-                        parent(field_S) .= (-2*ci*di/(ci^2 + di^2)^2) .* parent(initial_vel_centred) ./ cutoff_mask_data
-                    end
+                    parent(field_C) .= ((di^2 - ci^2)/(ci^2 + di^2)^2) .* parent(initial_vel_centred) ./ cutoff_mask_data
+                    parent(field_S) .= (-2*ci*di/(ci^2 + di^2)^2) .* parent(initial_vel_centred) ./ cutoff_mask_data
                 end
             end
         end
@@ -1312,10 +1303,9 @@ function initialise_filtered_vars_from_model(model::AbstractModel, config::Abstr
     vel_names = config.velocity_names
     label = config.label
     cutoff_mask = _filter_cutoff_mask(model, config)
-    # Match the offline initialization: map equilibria use 1/M, while a missing
-    # field mask follows the original uniform-filter assignments below.
+    # Map equilibria use 1/M; a missing field mask is the uniform value 1.
     cutoff_mask_data = if isnothing(cutoff_mask)
-        nothing
+        1
     else
         full_cutoff_mask = CenterField(model.grid)
         set!(full_cutoff_mask, cutoff_mask)
@@ -1366,11 +1356,7 @@ function initialise_filtered_vars_from_model(model::AbstractModel, config::Abstr
                 original_vel = getproperty(model.velocities, Symbol(vel_name))
                 original_vel_centred = Field(@at (Center, Center, Center) original_vel)
                 map_C = getproperty(model.tracers, filtered_map_C)
-                if isnothing(cutoff_mask_data)
-                    parent(map_C) .= (-1/c1^2)*parent(original_vel_centred)
-                else
-                    parent(map_C) .= (-1/c1^2) .* parent(original_vel_centred) ./ cutoff_mask_data
-                end
+                parent(map_C) .= (-1/c1^2) .* parent(original_vel_centred) ./ cutoff_mask_data
             else
                 for i in 1:filter_params.N_coeffs
                     filtered_map_C = Symbol("xi_", vel_name, label, "_C",i)
@@ -1381,13 +1367,8 @@ function initialise_filtered_vars_from_model(model::AbstractModel, config::Abstr
                     original_vel_centred = Field(@at (Center, Center, Center) original_vel)
                     map_C = getproperty(model.tracers, filtered_map_C)
                     map_S = getproperty(model.tracers, filtered_map_S)
-                    if isnothing(cutoff_mask_data)
-                        parent(map_C) .= ((di^2 - ci^2)/(ci^2 + di^2)^2)*parent(original_vel_centred)
-                        parent(map_S) .= (-2*ci*di/(ci^2 + di^2)^2)*parent(original_vel_centred)
-                    else
-                        parent(map_C) .= ((di^2 - ci^2)/(ci^2 + di^2)^2) .* parent(original_vel_centred) ./ cutoff_mask_data
-                        parent(map_S) .= (-2*ci*di/(ci^2 + di^2)^2) .* parent(original_vel_centred) ./ cutoff_mask_data
-                    end
+                    parent(map_C) .= ((di^2 - ci^2)/(ci^2 + di^2)^2) .* parent(original_vel_centred) ./ cutoff_mask_data
+                    parent(map_S) .= (-2*ci*di/(ci^2 + di^2)^2) .* parent(original_vel_centred) ./ cutoff_mask_data
                 end
             end
         end
