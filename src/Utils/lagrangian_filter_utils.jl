@@ -759,8 +759,9 @@ function _make_xiS_relaxation(i::Int, labelled_var_name::String, vel_name::Strin
 end
 
 
-# Keep the original map-relaxation constructors unchanged. Spatial cutoffs use
-# a separate forcing whose local map equilibrium includes 1 / cutoff_mask.
+# Keep the original map-relaxation constructors unchanged. With a spatial
+# cutoff, the map target changes by 1/M while the boundary mask still chooses
+# where relaxation acts; this helper needs both masks for those different jobs.
 function _make_spatial_xi_relaxation(component::Symbol, i::Int, labelled_var_name::String,
                                      vel_name::String, filter_params::NamedTuple,
                                      relax_timescale::Real, mask_func::Function,
@@ -784,7 +785,9 @@ function _make_spatial_xi_relaxation(component::Symbol, i::Int, labelled_var_nam
     # Arguments end with velocity, map state, cutoff mask, and parameters.
     relaxation = (args...) -> begin
         p = args[end]
+        # mask_func selects the boundary region; it does not set the cutoff.
         boundary_mask = mask_func(args[1:end-5]..., p[3])
+        # The cutoff field is args[end-1], giving the local map target 1/M.
         target = p[1] * args[end-3] / args[end-1]
         -(args[end-2] - target) * boundary_mask / p[2]
     end
