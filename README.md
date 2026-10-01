@@ -89,6 +89,17 @@ run_offline_Lagrangian_filter(filter_config)
 ```
 You can find an example of a simple simulation of geostrophic adjustment, filtered offline, in `/examples/offline_filter_geostrophic_adjustment.jl`.
 
+#### Experimental GeoDel regridding (3D)
+
+Set `LF_REGRID_BACKEND=geodel` before starting Julia to use GeoDel for the main
+three-dimensional regrid. Install GeoDel in PythonCall's Python environment, or
+set `LF_GEODEL_PYTHONPATH` to a compatible installation. The backend builds one
+tetrahedralization and reusable interpolation map per timestep for all variables.
+Other dimensions and bounded-face corrections continue to use SciPy. A GeoDel
+failure falls back to SciPy for that timestep; set `LF_GEODEL_STRICT=1` to expose
+the error during development. Set `LF_GEODEL_THREADS` to the allocated CPU count
+when needed. SciPy remains the default and GeoDel is loaded only when selected.
+
 ### Online Filtering
 
 For online filtering, you would integrate the filter directly into your `Oceananigans.jl` setup, using the helper functions provided. See the same geostrophic adjustment simulation, filtered online, in `/examples/online_filter_geostrophic_adjustment.jl`. The filtered values are then computed as your simulation runs, avoiding the need to save data at high frequency. 

@@ -86,3 +86,6 @@ docs/local_compile.sh
 
 # Zenodo metadata file
 !.zenodo.json
+# Optional Python interpolation helper
+__pycache__/
+*.pyc

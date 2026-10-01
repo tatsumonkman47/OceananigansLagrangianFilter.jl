@@ -7,9 +7,23 @@ using NCDatasets
 
 const scipy_interpolate = PythonCall.pynew()
 const numpy = PythonCall.pynew()
+const geodel_interpolate = PythonCall.pynew()
 function __init__()
     PythonCall.pycopy!(scipy_interpolate, pyimport("scipy.interpolate"))
     PythonCall.pycopy!(numpy, pyimport("numpy"))
+end
+
+function _load_geodel_interpolator!()
+    if PythonCall.pyisnull(geodel_interpolate)
+        python_sys = pyimport("sys")
+        python_sys.path.insert(0, @__DIR__)
+        geodel_path = strip(get(ENV, "LF_GEODEL_PYTHONPATH", ""))
+        if !isempty(geodel_path)
+            python_sys.path.insert(0, geodel_path)
+        end
+        PythonCall.pycopy!(geodel_interpolate, pyimport("geodel_interpolator"))
+    end
+    return geodel_interpolate
 end
 
 """
@@ -294,6 +308,12 @@ function regrid_to_mean_position!(config::AbstractConfig; extra_vars_to_regrid::
     velocity_names = config.velocity_names
     npad = config.npad 
     label = config.label
+    regrid_backend = lowercase(get(ENV, "LF_REGRID_BACKEND", "scipy"))
+    regrid_backend in ("scipy", "geodel") ||
+        error("LF_REGRID_BACKEND must be scipy or geodel, got $regrid_backend")
+    geodel_threads = parse(Int, get(ENV, "LF_GEODEL_THREADS", string(Threads.nthreads())))
+    geodel_threads >= 1 || error("LF_GEODEL_THREADS must be at least 1")
+    geodel_strict = get(ENV, "LF_GEODEL_STRICT", "0") == "1"
 
 
     if (config isa AbstractOfflineConfig) && config.advection === nothing
@@ -589,12 +609,35 @@ function regrid_to_mean_position!(config::AbstractConfig; extra_vars_to_regrid::
                 push!(regular_coord_mesh_norm, norm_mesh)
             end
 
+            # GeoDel handles the 3D main regrid. Keep the existing SciPy path
+            # for lower-dimensional grids and bounded-face corrections.
+            geodel_interp_data = nothing
+            if regrid_backend == "geodel" && n_true_dims == 3
+                try
+                    geodel_module = _load_geodel_interpolator!()
+                    targets = hcat((vec(mesh) for mesh in regular_coord_mesh_norm)...)
+                    geodel_interpolator = geodel_module.GeoDelInterpolator3D(
+                        coords_norm, targets;
+                        parallel=geodel_threads > 1,
+                        nb_threads=geodel_threads)
+                    geodel_interp_data = pyconvert(Array, geodel_interpolator(var_data))
+                catch err
+                    geodel_strict && rethrow()
+                    @warn "GeoDel regridding failed; using SciPy for this timestep" exception=(err, catch_backtrace())
+                end
+            end
+
             for (ivar,var) in enumerate(var_names_to_regrid)    
                 
                 # This is the main interpolation
-                values = var_data[:,ivar]
-                interpolator = scipy_interpolate.LinearNDInterpolator(coords_norm, values)
-                interp_data = pyconvert(Array,interpolator(regular_coord_mesh_norm...))
+                if geodel_interp_data === nothing
+                    values = var_data[:,ivar]
+                    interpolator = scipy_interpolate.LinearNDInterpolator(coords_norm, values)
+                    interp_data = pyconvert(Array,interpolator(regular_coord_mesh_norm...))
+                else
+                    interp_data = reshape(copy(geodel_interp_data[:, ivar]),
+                                          size(regular_coord_mesh_norm[1]))
+                end
 
                 # We already dealt with the periodic boundaries with padding, but we now make sure
                 # that the interpolation is accurate at fixed boundaries by doing an interpolation 
