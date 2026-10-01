@@ -89,6 +89,14 @@ run_offline_Lagrangian_filter(filter_config)
 ```
 You can find an example of a simple simulation of geostrophic adjustment, filtered offline, in `/examples/offline_filter_geostrophic_adjustment.jl`.
 
+#### Experimental CuPy regridding (2D)
+
+Set `LF_REGRID_BACKEND=cupy` before starting Julia to use CuPy for the main
+two-dimensional regrid. Install CuPy and its cuVS dependency in the Python
+environment used by PythonCall. Other dimensions and failed CuPy regrids use
+the existing SciPy path. CuPy is imported only when a 2D regrid requests it;
+the default remains SciPy. Boundary corrections and JLD2 output remain in Julia.
+
 ### Online Filtering
 
 For online filtering, you would integrate the filter directly into your `Oceananigans.jl` setup, using the helper functions provided. See the same geostrophic adjustment simulation, filtered online, in `/examples/online_filter_geostrophic_adjustment.jl`. The filtered values are then computed as your simulation runs, avoiding the need to save data at high frequency. 

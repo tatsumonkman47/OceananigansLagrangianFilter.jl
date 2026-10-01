@@ -294,6 +294,9 @@ function regrid_to_mean_position!(config::AbstractConfig; extra_vars_to_regrid::
     velocity_names = config.velocity_names
     npad = config.npad 
     label = config.label
+    regrid_backend = lowercase(get(ENV, "LF_REGRID_BACKEND", "scipy"))
+    regrid_backend in ("scipy", "cupy") ||
+        error("LF_REGRID_BACKEND must be scipy or cupy, got $regrid_backend")
 
 
     if (config isa AbstractOfflineConfig) && config.advection === nothing
@@ -589,12 +592,36 @@ function regrid_to_mean_position!(config::AbstractConfig; extra_vars_to_regrid::
                 push!(regular_coord_mesh_norm, norm_mesh)
             end
 
+            # CuPy currently supports 2-D Delaunay only. Evaluate all variables
+            # together so geometry and target lookup are shared at this timestep.
+            cupy_interp_data = nothing
+            if regrid_backend == "cupy" && n_true_dims == 2
+                try
+                    cupy = pyimport("cupy")
+                    cupy_spatial = pyimport("cupyx.scipy.spatial")
+                    cupy_interpolate = pyimport("cupyx.scipy.interpolate")
+                    targets = hcat((vec(mesh) for mesh in regular_coord_mesh_norm)...)
+                    triangulation = cupy_spatial.Delaunay(cupy.asarray(coords_norm))
+                    interpolator = cupy_interpolate.LinearNDInterpolator(
+                        triangulation, cupy.asarray(var_data))
+                    cupy_interp_data = pyconvert(Array,
+                        cupy.asnumpy(interpolator(cupy.asarray(targets))))
+                catch err
+                    @warn "CuPy regridding failed; using SciPy for this timestep" exception=(err, catch_backtrace())
+                end
+            end
+
             for (ivar,var) in enumerate(var_names_to_regrid)    
                 
                 # This is the main interpolation
-                values = var_data[:,ivar]
-                interpolator = scipy_interpolate.LinearNDInterpolator(coords_norm, values)
-                interp_data = pyconvert(Array,interpolator(regular_coord_mesh_norm...))
+                if cupy_interp_data === nothing
+                    values = var_data[:,ivar]
+                    interpolator = scipy_interpolate.LinearNDInterpolator(coords_norm, values)
+                    interp_data = pyconvert(Array,interpolator(regular_coord_mesh_norm...))
+                else
+                    interp_data = reshape(copy(cupy_interp_data[:, ivar]),
+                                          size(regular_coord_mesh_norm[1]))
+                end
 
                 # We already dealt with the periodic boundaries with padding, but we now make sure
                 # that the interpolation is accurate at fixed boundaries by doing an interpolation 
