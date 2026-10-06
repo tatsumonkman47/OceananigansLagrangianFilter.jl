@@ -89,16 +89,49 @@ run_offline_Lagrangian_filter(filter_config)
 ```
 You can find an example of a simple simulation of geostrophic adjustment, filtered offline, in `/examples/offline_filter_geostrophic_adjustment.jl`.
 
-#### Experimental GeoDel regridding (3D)
+#### Experimental GeoDel regridding (2D and 3D)
 
 Set `LF_REGRID_BACKEND=geodel` before starting Julia to use GeoDel for the main
-three-dimensional regrid. Install GeoDel in PythonCall's Python environment, or
-set `LF_GEODEL_PYTHONPATH` to a compatible installation. The backend builds one
-tetrahedralization and reusable interpolation map per timestep for all variables.
-Other dimensions and bounded-face corrections continue to use SciPy. A GeoDel
-failure falls back to SciPy for that timestep; set `LF_GEODEL_STRICT=1` to expose
-the error during development. Set `LF_GEODEL_THREADS` to the allocated CPU count
-when needed. SciPy remains the default and GeoDel is loaded only when selected.
+two- or three-dimensional regrid. This requires a GeoDel build that provides
+`Triangulation2D` as well as `Triangulation`; install it in PythonCall's Python
+environment or set `LF_GEODEL_PYTHONPATH` to a compatible installation. The
+backend builds one reusable interpolation map per timestep for all variables.
+Two-dimensional bounded faces of a 3D grid also use GeoDel. One-dimensional
+bounded edges use NumPy's linear interpolation. A GeoDel error stops the regrid
+instead of silently changing methods. Set `LF_GEODEL_THREADS` to the allocated
+CPU count when needed. SciPy remains the default when `LF_REGRID_BACKEND` is not
+set. The GeoDel helper still uses SciPy's `cKDTree` to seed point location; it
+does not use SciPy for triangulation or interpolation in GeoDel mode.
+
+#### 2D interpolation kernel benchmark (L40S)
+
+Three fields, five repeats per width, and one source and target per pixel. Times
+are seconds per snapshot; warm medians exclude the first call. CuPy's adjusted
+mean subtracts the first call's excess over its warm median from the five-call
+mean. This measures interpolation kernels, not a full filter run.
+
+| Grid | SciPy warm | CuPy warm | CuPy adjusted mean | GeoDel warm |
+| ---: | ---: | ---: | ---: | ---: |
+| 64² | 0.022 | 0.072 | 0.072 | 0.018 |
+| 128² | 0.097 | 0.129 | 0.129 | 0.041 |
+| 256² | 0.400 | 0.231 | 0.222 | 0.144 |
+| 384² | 0.922 | 0.359 | 0.359 | 0.333 |
+| 512² | 1.618 | 0.427 | 0.409 | 0.580 |
+| 1024² | 8.091 | 0.946 | 0.950 | 2.518 |
+
+| Grid | CuPy first-call excess (s) | CuPy nonfinite where SciPy is finite |
+| ---: | ---: | ---: |
+| 64² | 34.568 | 92 |
+| 128² | 1.289 | 176 |
+| 256² | 1.262 | 388 |
+| 384² | 2.068 | 598 |
+| 512² | 1.351 | 844 |
+| 1024² | 1.086 | 1,479 |
+
+GeoDel's finite mask matched SciPy at every width. The largest difference on
+shared finite targets was 1.3e-15 for GeoDel and 2.1e-12 for CuPy. The results
+are from Slurm job `18981326` (October 1, 2026). In the synthetic 256² and
+1024² cases, CuPy-only nonfinite targets lie on the outer edge or a grid diagonal.
 
 ### Online Filtering
 

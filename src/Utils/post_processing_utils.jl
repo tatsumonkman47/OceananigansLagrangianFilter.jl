@@ -9,8 +9,14 @@ const scipy_interpolate = PythonCall.pynew()
 const numpy = PythonCall.pynew()
 const geodel_interpolate = PythonCall.pynew()
 function __init__()
-    PythonCall.pycopy!(scipy_interpolate, pyimport("scipy.interpolate"))
     PythonCall.pycopy!(numpy, pyimport("numpy"))
+end
+
+function _load_scipy_interpolate!()
+    if PythonCall.pyisnull(scipy_interpolate)
+        PythonCall.pycopy!(scipy_interpolate, pyimport("scipy.interpolate"))
+    end
+    return scipy_interpolate
 end
 
 function _load_geodel_interpolator!()
@@ -24,6 +30,18 @@ function _load_geodel_interpolator!()
         PythonCall.pycopy!(geodel_interpolate, pyimport("geodel_interpolator"))
     end
     return geodel_interpolate
+end
+
+function _interpolate_bounded_face(coords, values, meshes, backend, geodel_threads)
+    if backend == "geodel"
+        geodel_module = _load_geodel_interpolator!()
+        targets = hcat((vec(mesh) for mesh in meshes)...)
+        interpolator = geodel_module.GeoDelInterpolator2D(coords, targets;
+            nb_threads=geodel_threads)
+        return reshape(pyconvert(Array, interpolator(values)), size(meshes[1]))
+    end
+    interpolator = _load_scipy_interpolate!().LinearNDInterpolator(coords, values)
+    return pyconvert(Array, interpolator(meshes...))
 end
 
 """
@@ -313,7 +331,6 @@ function regrid_to_mean_position!(config::AbstractConfig; extra_vars_to_regrid::
         error("LF_REGRID_BACKEND must be scipy or geodel, got $regrid_backend")
     geodel_threads = parse(Int, get(ENV, "LF_GEODEL_THREADS", string(Threads.nthreads())))
     geodel_threads >= 1 || error("LF_GEODEL_THREADS must be at least 1")
-    geodel_strict = get(ENV, "LF_GEODEL_STRICT", "0") == "1"
 
 
     if (config isa AbstractOfflineConfig) && config.advection === nothing
@@ -594,6 +611,8 @@ function regrid_to_mean_position!(config::AbstractConfig; extra_vars_to_regrid::
             
             coords = data_array[:,1:2:2*n_true_dims] # The first columns are the coordinates and indices, just take the coordinates
             var_data = data_array[:,(2*n_true_dims+1):end] # The rest is the data
+            regrid_backend == "geodel" && !(n_true_dims in (2, 3)) &&
+                error("GeoDel regridding requires two or three active dimensions")
             
             # Normalisation to help with interpolation stability. Delaunay triangulation can struggle with very different scales in 
             # different dimensions (e.g. x - z slice of ocean).
@@ -609,22 +628,16 @@ function regrid_to_mean_position!(config::AbstractConfig; extra_vars_to_regrid::
                 push!(regular_coord_mesh_norm, norm_mesh)
             end
 
-            # GeoDel handles the 3D main regrid. Keep the existing SciPy path
-            # for lower-dimensional grids and bounded-face corrections.
+            # Build one reusable GeoDel interpolation map for all variables.
             geodel_interp_data = nothing
-            if regrid_backend == "geodel" && n_true_dims == 3
-                try
-                    geodel_module = _load_geodel_interpolator!()
-                    targets = hcat((vec(mesh) for mesh in regular_coord_mesh_norm)...)
-                    geodel_interpolator = geodel_module.GeoDelInterpolator3D(
-                        coords_norm, targets;
-                        parallel=geodel_threads > 1,
-                        nb_threads=geodel_threads)
-                    geodel_interp_data = pyconvert(Array, geodel_interpolator(var_data))
-                catch err
-                    geodel_strict && rethrow()
-                    @warn "GeoDel regridding failed; using SciPy for this timestep" exception=(err, catch_backtrace())
-                end
+            if regrid_backend == "geodel"
+                geodel_module = _load_geodel_interpolator!()
+                targets = hcat((vec(mesh) for mesh in regular_coord_mesh_norm)...)
+                interpolator_type = n_true_dims == 2 ?
+                    geodel_module.GeoDelInterpolator2D : geodel_module.GeoDelInterpolator3D
+                geodel_interpolator = interpolator_type(coords_norm, targets;
+                    parallel=geodel_threads > 1, nb_threads=geodel_threads)
+                geodel_interp_data = pyconvert(Array, geodel_interpolator(var_data))
             end
 
             for (ivar,var) in enumerate(var_names_to_regrid)    
@@ -632,7 +645,7 @@ function regrid_to_mean_position!(config::AbstractConfig; extra_vars_to_regrid::
                 # This is the main interpolation
                 if geodel_interp_data === nothing
                     values = var_data[:,ivar]
-                    interpolator = scipy_interpolate.LinearNDInterpolator(coords_norm, values)
+                    interpolator = _load_scipy_interpolate!().LinearNDInterpolator(coords_norm, values)
                     interp_data = pyconvert(Array,interpolator(regular_coord_mesh_norm...))
                 else
                     interp_data = reshape(copy(geodel_interp_data[:, ivar]),
@@ -687,8 +700,8 @@ function regrid_to_mean_position!(config::AbstractConfig; extra_vars_to_regrid::
                                 y_mesh_norm = (y_mesh .- coord_mins_cut[2]) ./ coord_ranges_cut[2]
                                 z_mesh_norm = (z_mesh .- coord_mins_cut[3]) ./ coord_ranges_cut[3]
                                 meshes = (y_mesh_norm,z_mesh_norm)
-                                interpolator = scipy_interpolate.LinearNDInterpolator(coords_cut_norm, values_cut)
-                                interp_data[edge_index_with_halos,:,:] = pyconvert(Array,interpolator(meshes...))
+                                interp_data[edge_index_with_halos,:,:] = _interpolate_bounded_face(
+                                    coords_cut_norm, values_cut, meshes, regrid_backend, geodel_threads)
                             else
                                 @info "Number of dimensions $n_true_dims is not implemented"
                             end
@@ -714,8 +727,8 @@ function regrid_to_mean_position!(config::AbstractConfig; extra_vars_to_regrid::
                                 x_mesh_norm = (x_mesh .- coord_mins_cut[1]) ./ coord_ranges_cut[1]
                                 z_mesh_norm = (z_mesh .- coord_mins_cut[3]) ./ coord_ranges_cut[3]
                                 meshes = (x_mesh_norm,z_mesh_norm)
-                                interpolator = scipy_interpolate.LinearNDInterpolator(coords_cut_norm, values_cut)
-                                interp_data[:,edge_index_with_halos,:] = pyconvert(Array,interpolator(meshes...))
+                                interp_data[:,edge_index_with_halos,:] = _interpolate_bounded_face(
+                                    coords_cut_norm, values_cut, meshes, regrid_backend, geodel_threads)
                             else
                                 @info "Number of dimensions $n_true_dims is not implemented"
                             end
@@ -739,8 +752,8 @@ function regrid_to_mean_position!(config::AbstractConfig; extra_vars_to_regrid::
                                 x_mesh_norm = (x_mesh .- coord_mins_cut[1]) ./ coord_ranges_cut[1]
                                 y_mesh_norm = (y_mesh .- coord_mins_cut[2]) ./ coord_ranges_cut[2]
                                 meshes = (x_mesh_norm,y_mesh_norm)
-                                interpolator = scipy_interpolate.LinearNDInterpolator(coords_cut_norm, values_cut)
-                                interp_data[:,:,edge_index_with_halos] = pyconvert(Array,interpolator(meshes...))
+                                interp_data[:,:,edge_index_with_halos] = _interpolate_bounded_face(
+                                    coords_cut_norm, values_cut, meshes, regrid_backend, geodel_threads)
                             else
                                 @info "Number of dimensions $n_true_dims is not implemented"
                             end

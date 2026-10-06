@@ -1,6 +1,6 @@
-"""Optional GeoDel-backed 3D linear interpolation for the Julia package.
+"""Optional GeoDel-backed 2D and 3D linear interpolation for the Julia package.
 
-GeoDel supplies tetrahedra and facet adjacency.  This module supplies the rest
+GeoDel supplies simplices and facet adjacency. This module supplies the rest
 of the LinearNDInterpolator-shaped operation: target location, reusable
 barycentric weights, vector-valued evaluation, and outside-hull fill values.
 """
@@ -14,8 +14,10 @@ from scipy.spatial import cKDTree
 NO_CELL = -1
 
 
-class GeoDelInterpolator3D:
-    """Construct and apply a reusable 3D linear interpolation map."""
+class _GeoDelInterpolator:
+    """Construct and apply a reusable linear interpolation map."""
+
+    dimension = None
 
     def __init__(
         self,
@@ -38,31 +40,39 @@ class GeoDelInterpolator3D:
 
         points = np.ascontiguousarray(points, dtype=np.float64)
         targets = np.ascontiguousarray(targets, dtype=np.float64)
-        if points.ndim != 2 or points.shape[1] != 3:
-            raise ValueError("points must have shape (N, 3)")
-        if targets.ndim != 2 or targets.shape[1] != 3:
-            raise ValueError("targets must have shape (M, 3)")
+        dimension = self.dimension
+        if points.ndim != 2 or points.shape[1] != dimension:
+            raise ValueError(f"points must have shape (N, {dimension})")
+        if targets.ndim != 2 or targets.shape[1] != dimension:
+            raise ValueError(f"targets must have shape (M, {dimension})")
         if not np.isfinite(points).all() or not np.isfinite(targets).all():
             raise ValueError("points and targets must be finite")
 
-        triangulation = geodel.Triangulation(
-            points, parallel=parallel, nb_threads=nb_threads
-        )
+        if dimension == 2:
+            triangulation = geodel.Triangulation2D(points)
+        else:
+            triangulation = geodel.Triangulation(
+                points, parallel=parallel, nb_threads=nb_threads
+            )
         cells = np.asarray(triangulation.cells).astype(np.int64, copy=False)
         neighbor_indices = np.asarray(triangulation.neighbors)
         neighbors = neighbor_indices.astype(np.int64)
         neighbors[neighbor_indices == geodel.NO_INDEX] = NO_CELL
 
-        tetrahedra = points[cells]
-        origins = tetrahedra[:, 3]
-        bases = np.transpose(tetrahedra[:, :3] - origins[:, None, :], (0, 2, 1))
+        simplices = points[cells]
+        origins = simplices[:, dimension]
+        bases = np.transpose(
+            simplices[:, :dimension] - origins[:, None, :], (0, 2, 1)
+        )
         inverse_bases = np.linalg.inv(bases)
 
         # Duplicate input points can be absent from the tessellation.  Seed from
         # the nearest vertex that GeoDel actually retained.
         used_vertices = np.unique(cells)
         vertex_seed = np.full(points.shape[0], NO_CELL, dtype=np.int64)
-        repeated_cells = np.repeat(np.arange(cells.shape[0], dtype=np.int64), 4)
+        repeated_cells = np.repeat(
+            np.arange(cells.shape[0], dtype=np.int64), dimension + 1
+        )
         vertex_seed[cells.ravel()] = repeated_cells
         seed_tree = cKDTree(points[used_vertices])
         query_workers = nb_threads if nb_threads > 0 else -1
@@ -107,8 +117,9 @@ class GeoDelInterpolator3D:
         max_steps,
     ):
         count = targets.shape[0]
-        vertices = np.zeros((count, 4), dtype=np.int64)
-        weights = np.full((count, 4), np.nan, dtype=np.float64)
+        simplex_size = cells.shape[1]
+        vertices = np.zeros((count, simplex_size), dtype=np.int64)
+        weights = np.full((count, simplex_size), np.nan, dtype=np.float64)
         outside = np.zeros(count, dtype=bool)
         unresolved = np.zeros(count, dtype=bool)
         current = initial_cells.copy()
@@ -119,11 +130,11 @@ class GeoDelInterpolator3D:
                 break
             active_cells = current[active]
             delta = targets[active] - origins[active_cells]
-            first_three = np.einsum(
+            first_weights = np.einsum(
                 "mij,mj->mi", inverse_bases[active_cells], delta
             )
             active_weights = np.column_stack(
-                (first_three, 1.0 - first_three.sum(axis=1))
+                (first_weights, 1.0 - first_weights.sum(axis=1))
             )
             inside = np.min(active_weights, axis=1) >= -tolerance
 
@@ -169,3 +180,15 @@ class GeoDelInterpolator3D:
         gathered = values[self.vertices[valid]]
         result[valid] = np.einsum("mi,mik->mk", self.weights[valid], gathered)
         return result[:, 0] if scalar else result
+
+
+class GeoDelInterpolator2D(_GeoDelInterpolator):
+    """Construct and apply a reusable 2D linear interpolation map."""
+
+    dimension = 2
+
+
+class GeoDelInterpolator3D(_GeoDelInterpolator):
+    """Construct and apply a reusable 3D linear interpolation map."""
+
+    dimension = 3
