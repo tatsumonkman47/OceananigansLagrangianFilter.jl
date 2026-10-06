@@ -93,9 +93,72 @@ You can find an example of a simple simulation of geostrophic adjustment, filter
 
 Set `LF_REGRID_BACKEND=cupy` before starting Julia to use CuPy for the main
 two-dimensional regrid. Install CuPy and its cuVS dependency in the Python
-environment used by PythonCall. Other dimensions and failed CuPy regrids use
-the existing SciPy path. CuPy is imported only when a 2D regrid requests it;
-the default remains SciPy. Boundary corrections and JLD2 output remain in Julia.
+environment used by PythonCall. Other dimensions, and CuPy regrids that raise an
+exception, use the existing SciPy path. CuPy is imported only when a 2D regrid
+requests it; the default remains SciPy. Boundary corrections and JLD2 output
+remain in Julia.
+
+> **This backend is not validated for production. It silently produces NaNs.**
+>
+> The CuPy path returns `NaN` at a small fraction of targets where SciPy returns
+> a finite value. This is *not* caught by the SciPy fallback above: CuPy raises no
+> exception, so the regrid completes and the NaNs land in the output. The error is
+> one-directional — there is no case on record of CuPy producing a finite value
+> where SciPy produced `NaN`. Use `scipy` for any run whose numbers you intend to
+> trust.
+
+The cause is the CuPy/cuVS simplex locator, not the convex hull and not the
+boundary corrections. On a production surface case (`n=384`, 500 snapshots), the
+first unprotected mismatch was at grid index `(150, 386, 1)`, a target comfortably
+inside the source-cloud hull (signed normalized SciPy hull margin `-0.0034`). Both
+triangulations contained an identical 294,883 simplices and CuPy retained all
+147,456 source vertices, yet CuPy's point lookup returned no simplex for
+tolerances from zero through `1e-6`. Raising the lookup tolerance is not a fix:
+at `1e-3` the lookup succeeds but the walk accepts wrong simplices, corrupting
+otherwise-good values by up to `1.8` in absolute terms.
+
+Where CuPy does return a finite value, it agrees with SciPy closely: over
+220,970,886 mutually finite production values the RMS difference was `1.8e-8` and
+the maximum absolute difference `1.7e-4`.
+
+#### 2D interpolation kernel benchmark (L40S)
+
+Three fields, five repeats per width, and one source and target per pixel. Times
+are seconds per snapshot; warm medians exclude the first call. CuPy's adjusted
+mean subtracts the first call's excess over its warm median from the five-call
+mean. This measures interpolation kernels, not a full filter run. GeoDel uses
+the companion branch's updated 2D helper.
+
+| Grid | SciPy warm | CuPy warm | CuPy adjusted mean | GeoDel warm |
+| ---: | ---: | ---: | ---: | ---: |
+| 64² | 0.022 | 0.072 | 0.072 | 0.018 |
+| 128² | 0.097 | 0.129 | 0.129 | 0.041 |
+| 256² | 0.400 | 0.231 | 0.222 | 0.144 |
+| 384² | 0.922 | 0.359 | 0.359 | 0.333 |
+| 512² | 1.618 | 0.427 | 0.409 | 0.580 |
+| 1024² | 8.091 | 0.946 | 0.950 | 2.518 |
+
+| Grid | CuPy first-call excess (s) | CuPy nonfinite where SciPy is finite |
+| ---: | ---: | ---: |
+| 64² | 34.568 | 92 |
+| 128² | 1.289 | 176 |
+| 256² | 1.262 | 388 |
+| 384² | 2.068 | 598 |
+| 512² | 1.351 | 844 |
+| 1024² | 1.086 | 1,479 |
+
+GeoDel's finite mask matched SciPy at every width. The largest difference on
+shared finite targets was 1.3e-15 for GeoDel and 2.1e-12 for CuPy. The results
+are from Slurm job `18981326` (October 1, 2026). In the synthetic 256² and
+1024² cases, CuPy-only nonfinite targets lie on the outer edge or a grid diagonal,
+where a structured triangulation is closest to degenerate — 314 of 388 on the
+outer edge at 256², and 1,153 of 1,479 at 1024², with the interior remainder
+falling exactly on the two diagonals.
+
+The counts above are for a synthetic displaced grid and are not a prediction for
+real data. On the production surface case the raw mask difference was 106,323
+points over 500 snapshots, of which 549 fell outside the points already replaced
+by the fixed-boundary and halo corrections, spread over 150 of the 500 snapshots.
 
 ### Online Filtering
 
